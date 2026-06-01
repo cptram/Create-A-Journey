@@ -4557,23 +4557,58 @@ function confirmDeleteAccount(){
   document.body.appendChild(ov);
 }
 
-function doDeleteAccount(){
+async function doDeleteAccount(){
   if(!CU)return;
   const userId=CU.id;
-  // Remove from local accounts
-  const accounts=DB.accounts().filter(a=>!(a.email===CU.email&&a.pass===CU.pass&&a.name===CU.name));
+  const userEmail=CU.email;
+  const userName=CU.name;
+  const userPass=CU.pass;
+
+  // 1. Remove from local accounts immediately
+  const accounts=DB.accounts().filter(a=>!(a.email===userEmail&&a.pass===userPass&&a.name===userName));
   DB.saveAccounts(accounts);
-  // Remove from cloud
-  if(Cloud.available())Cloud.deleteAccount(userId);
-  // Delete all owned campaigns and their data
+
+  // 2. Clear local session so they can't auto-login
+  S.d('session');
+  S.d('my_sess_'+userId);
+
+  // 3. Delete from Firestore — this is the critical one so they can't sign back in
+  if(Cloud.available()){
+    try{
+      await fbDb.collection('accounts').doc(userId).delete();
+      console.log('Account deleted from Firestore');
+
+      // Also delete all owned campaigns from Firestore
+      const ownedSnap=await fbDb.collection('campaigns').where('ownerId','==',userId).get();
+      const deletions=[];
+      ownedSnap.docs.forEach(doc=>{
+        deletions.push(fbDb.collection('campaigns').doc(doc.id).delete());
+      });
+
+      // Delete all campaign content owned by this user
+      const tables=['characters','quests','notes','npcs','recaps','wiki','abilities','relations','maps'];
+      for(const table of tables){
+        const snap=await fbDb.collection(table).where('campaignId','in',
+          ownedSnap.docs.length>0?ownedSnap.docs.map(d=>d.id):['__none__']
+        ).get().catch(()=>({docs:[]}));
+        snap.docs.forEach(doc=>deletions.push(fbDb.collection(table).doc(doc.id).delete()));
+      }
+
+      await Promise.all(deletions);
+    }catch(e){
+      console.error('Error deleting from Firestore:',e);
+    }
+  }
+
+  // 4. Delete local campaign data
   const ownedCampaigns=(S.g('campaigns')||[]).filter(c=>c.ownerId===userId);
   ownedCampaigns.forEach(c=>DB.deleteCampaign(c.id));
-  // Remove as member from other campaigns
+
+  // 5. Remove as member from other campaigns
   const allCamps=S.g('campaigns')||[];
   allCamps.forEach(c=>{if(c.members)c.members=c.members.filter(m=>m.id!==userId);});
   S.s('campaigns',allCamps);
-  // Clear session
-  S.d('session');
+
   closeModal();
   toast('Account deleted. Goodbye!',4000);
   setTimeout(()=>{
