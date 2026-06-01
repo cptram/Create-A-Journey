@@ -6,9 +6,9 @@
 <title>Create a Journey v4.1 — by Creative Journeys</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
-<!-- Firebase via jsDelivr (works on Netlify) -->
-<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/app/dist/index.compat.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firestore/dist/index.compat.min.js"></script>
+<!-- Firebase SDKs (compat version for browser use) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
 :root{
   --bg:#0f0e17;--bg2:#1a1830;--surface:#1e1c32;--surface2:#252340;
@@ -580,6 +580,8 @@ const Cloud={
       console.log('✅ Account saved to Firestore:',user.email);
     }catch(e){
       console.error('❌ Cloud saveAccount error:',e.code,e.message);
+      // Show visible warning so user knows cloud save failed
+      toast('⚠️ Cloud save failed: '+e.message+' — your account is saved locally only.',6000);
     }
   },
   // Delete account from Firestore
@@ -2017,18 +2019,22 @@ function removeCombatant(idx){combatants.splice(idx,1);if(combatTurn>=combatants
 function clearCombat(){combatants=[];combatTurn=0;renderCombat();}
 
 function openAddCombatantModal(){
-  // Prefill with campaign characters
   const chars=CC?DB.list('characters',CC.id):[];
-  document.getElementById('main');
+  const npcs=CC?DB.list('npcs',CC.id):[];
   openModal(`
     <button class="modal-x" onclick="closeModal()">×</button>
     <div class="modal-t">Add combatant</div>
     ${chars.length>0?`
-      <div class="lbl">Add from characters</div>
+      <div class="lbl">Characters</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
         ${chars.map(c=>`<button class="btn" style="font-size:10px;" onclick="addCombatantFromChar('${c.id}')">${c.name}</button>`).join('')}
       </div>`:''}
-    <div class="lbl">Or add custom</div>
+    ${npcs.length>0?`
+      <div class="lbl">NPCs</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+        ${npcs.map(n=>`<button class="btn" style="font-size:10px;border-color:var(--red-dim);color:var(--red);" onclick="addCombatantFromNPC('${n.id}')">${n.name}</button>`).join('')}
+      </div>`:''}
+    <div class="lbl">Custom combatant</div>
     <label class="lbl">Name *</label><input class="inp" id="f-cname" placeholder="e.g. Goblin Chief">
     <div class="g2">
       <div><label class="lbl">HP current</label><input class="inp" id="f-chpc" type="number" value="20"></div>
@@ -2041,6 +2047,11 @@ function openAddCombatantModal(){
 function addCombatantFromChar(id){
   const c=DB.list('characters',CC.id).find(x=>x.id===id);if(!c)return;
   combatants.push({name:c.name,hpCur:c.hpCur||10,hpMax:c.hpMax||10,dex:c.dex||10,init:0,isPlayer:true});
+  closeModal();renderCombat();
+}
+function addCombatantFromNPC(id){
+  const n=DB.list('npcs',CC.id).find(x=>x.id===id);if(!n)return;
+  combatants.push({name:n.name,hpCur:n.hpCur||20,hpMax:n.hpMax||20,dex:10,init:0,isNPC:true});
   closeModal();renderCombat();
 }
 function addCustomCombatant(){
