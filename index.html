@@ -6,9 +6,13 @@
 <title>Create a Journey v4.1 — by Creative Journeys</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
-<!-- Firebase SDKs (compat version for browser use) -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<!-- Firebase loaded as ES module - bypasses CSP script-src restrictions -->
+<script type="module">
+import{initializeApp}from'https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js';
+import{getFirestore,collection,doc,setDoc,getDoc,getDocs,deleteDoc,query,where,limit,updateDoc}from'https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js';
+window._fbMod={initializeApp,getFirestore,collection,doc,setDoc,getDoc,getDocs,deleteDoc,query,where,limit,updateDoc};
+window.dispatchEvent(new Event('firebase-ready'));
+</script>
 <style>
 :root{
   --bg:#0f0e17;--bg2:#1a1830;--surface:#1e1c32;--surface2:#252340;
@@ -537,11 +541,14 @@ const FB_CONFIG={
   appId:"1:123551854366:web:9e6d02aa496fb729cb630f"
 };
 let fbApp=null,fbDb=null,_fbRetries=0;
+// Firebase modular API references (set when ES module loads)
+let _fb={};
+
 function initFirebase(){
-  if(typeof firebase==='undefined'){
+  if(!window._fbMod){
     _fbRetries++;
     if(_fbRetries>50){
-      console.error('Firebase SDK failed to load after 10s — cloud features disabled. Check network/CSP settings.');
+      console.error('Firebase SDK failed to load after 10s — cloud features disabled.');
       return;
     }
     setTimeout(initFirebase,200);
@@ -549,9 +556,11 @@ function initFirebase(){
   }
   try{
     if(fbDb)return;
-    fbApp=firebase.apps.length?firebase.apps[0]:firebase.initializeApp(FB_CONFIG);
-    fbDb=firebase.firestore();
-    fbDb.collection('_ping').doc('test').set({ts:Date.now()}).then(()=>{
+    _fb=window._fbMod;
+    fbApp=_fb.initializeApp(FB_CONFIG);
+    fbDb=_fb.getFirestore(fbApp);
+    // Test write
+    _fb.setDoc(_fb.doc(_fb.collection(fbDb,'_ping'),'test'),{ts:Date.now()}).then(()=>{
       console.log('✅ Firestore connected');
     }).catch(e=>{
       console.error('❌ Firestore write failed:',e.code,e.message);
@@ -559,130 +568,117 @@ function initFirebase(){
   }catch(e){console.error('Firebase init failed:',e);}
 }
 
+// Listen for module ready event
+window.addEventListener('firebase-ready',()=>{
+  initFirebase();
+});
+
 // Cloud account functions — accounts live in Firestore, everything else in localStorage
 const Cloud={
-  // Find account by email+pass — checks Firestore
+  available(){return!!fbDb;},
+
   async findAccounts(email,pass){
     if(!fbDb)return null;
     try{
-      const snap=await fbDb.collection('accounts')
-        .where('email','==',email.toLowerCase())
-        .where('pass','==',pass)
-        .get();
+      const q=_fb.query(_fb.collection(fbDb,'accounts'),_fb.where('email','==',email),_fb.where('pass','==',pass));
+      const snap=await _fb.getDocs(q);
       return snap.docs.map(d=>d.data());
-    }catch(e){console.warn('Cloud findAccounts error:',e);return null;}
+    }catch(e){console.warn('Cloud findAccounts:',e);return null;}
   },
-  // Save/update account in Firestore
+
   async saveAccount(user){
-    if(!fbDb||!user||!user.id)return;
+    if(!fbDb||!user?.id)return;
     try{
-      await fbDb.collection('accounts').doc(user.id).set(user,{merge:true});
-      console.log('✅ Account saved to Firestore:',user.email);
+      await _fb.setDoc(_fb.doc(fbDb,'accounts',user.id),user,{merge:true});
+      console.log('✅ Account saved:',user.email);
     }catch(e){
-      console.error('❌ Cloud saveAccount error:',e.code,e.message);
-      // Show visible warning so user knows cloud save failed
-      toast('⚠️ Cloud save failed: '+e.message+' — your account is saved locally only.',6000);
+      console.error('❌ saveAccount:',e.code,e.message);
+      toast('⚠️ Cloud save failed: '+e.message,5000);
     }
   },
-  // Delete account from Firestore
+
   async deleteAccount(userId){
     if(!fbDb||!userId)return;
-    try{
-      await fbDb.collection('accounts').doc(userId).delete();
-    }catch(e){console.warn('Cloud deleteAccount error:',e);}
+    try{await _fb.deleteDoc(_fb.doc(fbDb,'accounts',userId));}
+    catch(e){console.warn('Cloud deleteAccount:',e);}
   },
-  // Save/update a campaign in Firestore
+
   async saveCampaign(camp){
-    if(!fbDb||!camp||!camp.id)return;
-    try{
-      // Don't store massive image data in Firestore — strip map imgData
-      const clean={...camp};
-      delete clean._maps;
-      await fbDb.collection('campaigns').doc(camp.id).set(clean,{merge:true});
-    }catch(e){console.warn('Cloud saveCampaign error:',e);}
+    if(!fbDb||!camp?.id)return;
+    try{const c={...camp};delete c._maps;await _fb.setDoc(_fb.doc(fbDb,'campaigns',camp.id),c,{merge:true});}
+    catch(e){console.warn('Cloud saveCampaign:',e);}
   },
-  // Find a campaign by invite code — cloud lookup so any device can join
+
   async findCampaignByCode(code){
     if(!fbDb)return null;
     try{
       const clean=code.replace(/[^a-zA-Z0-9]/g,'').toUpperCase();
-      const snap=await fbDb.collection('campaigns')
-        .where('inviteCodeClean','==',clean)
-        .limit(1)
-        .get();
-      if(snap.empty)return null;
-      return snap.docs[0].data();
-    }catch(e){console.warn('Cloud findCampaignByCode error:',e);return null;}
+      const q=_fb.query(_fb.collection(fbDb,'campaigns'),_fb.where('inviteCodeClean','==',clean),_fb.limit(1));
+      const snap=await _fb.getDocs(q);
+      return snap.empty?null:snap.docs[0].data();
+    }catch(e){console.warn('Cloud findCampaignByCode:',e);return null;}
   },
-  // Add a member to a campaign in Firestore
+
   async addMember(campId,member){
     if(!fbDb||!campId||!member)return;
     try{
-      const ref=fbDb.collection('campaigns').doc(campId);
-      const doc=await ref.get();
-      if(!doc.exists)return;
-      const camp=doc.data();
+      const ref=_fb.doc(fbDb,'campaigns',campId);
+      const snap=await _fb.getDoc(ref);
+      if(!snap.exists())return;
+      const camp=snap.data();
       const members=camp.members||[];
       const memberIds=camp.memberIds||[];
       if(!members.find(m=>m.id===member.id)){
         members.push(member);
         if(!memberIds.includes(member.id))memberIds.push(member.id);
-        await ref.update({members,memberIds,updatedAt:Date.now()});
+        await _fb.updateDoc(ref,{members,memberIds,updatedAt:Date.now()});
       }
       return{...camp,members,memberIds};
-    }catch(e){console.warn('Cloud addMember error:',e);return null;}
+    }catch(e){console.warn('Cloud addMember:',e);return null;}
   },
-  // Get a campaign by id from Firestore
+
   async getCampaign(id){
     if(!fbDb||!id)return null;
     try{
-      const doc=await fbDb.collection('campaigns').doc(id).get();
-      return doc.exists?doc.data():null;
-    }catch(e){console.warn('Cloud getCampaign error:',e);return null;}
+      const snap=await _fb.getDoc(_fb.doc(fbDb,'campaigns',id));
+      return snap.exists()?snap.data():null;
+    }catch(e){console.warn('Cloud getCampaign:',e);return null;}
   },
-  // Save a campaign data item (character, quest, note, etc.) to Firestore
+
   async saveItem(table,item){
-    if(!fbDb||!item||!item.id)return;
-    try{await fbDb.collection(table).doc(item.id).set(item,{merge:true});}
-    catch(e){console.warn('Cloud saveItem error:',table,e);}
+    if(!fbDb||!item?.id)return;
+    try{await _fb.setDoc(_fb.doc(fbDb,table,item.id),item,{merge:true});}
+    catch(e){console.warn('Cloud saveItem:',table,e);}
   },
-  // Delete a campaign data item from Firestore
+
   async delItem(table,id){
     if(!fbDb||!id)return;
-    try{await fbDb.collection(table).doc(id).delete();}
-    catch(e){console.warn('Cloud delItem error:',table,e);}
+    try{await _fb.deleteDoc(_fb.doc(fbDb,table,id));}
+    catch(e){console.warn('Cloud delItem:',table,e);}
   },
-  // Load all items for a campaign from Firestore
+
   async loadCampaignData(campaignId){
     if(!fbDb||!campaignId)return;
     const tables=['characters','quests','notes','npcs','maps','recaps','wiki','abilities','relations'];
     const deleted=S.g('_deleted')||{};
     try{
       await Promise.all(tables.map(async table=>{
-        const snap=await fbDb.collection(table).where('campaignId','==',campaignId).get();
+        const q=_fb.query(_fb.collection(fbDb,table),_fb.where('campaignId','==',campaignId));
+        const snap=await _fb.getDocs(q);
         if(snap.empty)return;
-        const deletedIds=(deleted[table]||[]);
-        const existing=S.g(table)||[];
+        const deletedIds=deleted[table]||[];
+        const local=S.g(table)||[];
         snap.docs.forEach(d=>{
           const item=d.data();
-          // Skip items that were deleted locally
           if(deletedIds.includes(item.id))return;
-          const i=existing.findIndex(x=>x.id===item.id);
-          if(i>=0){
-            // Cloud wins only if newer
-            if(!existing[i].updatedAt||(item.updatedAt&&item.updatedAt>=existing[i].updatedAt)){
-              existing[i]=item;
-            }
-          } else {
-            existing.push(item);
-          }
+          const i=local.findIndex(x=>x.id===item.id);
+          if(i>=0){if(!local[i].updatedAt||(item.updatedAt&&item.updatedAt>=local[i].updatedAt))local[i]=item;}
+          else local.push(item);
         });
-        S.s(table,existing);
+        S.s(table,local);
       }));
-    }catch(e){console.warn('Cloud loadCampaignData error:',e);}
+    }catch(e){console.warn('Cloud loadCampaignData:',e);}
   },
-  // Check if Firestore is reachable
-  available(){return!!fbDb;}
 };
 
 // ══════════════════════════════════════════
@@ -936,14 +932,12 @@ const App={
     if(!Cloud.available())return;
     try{
       // 1. Load campaigns this user OWNS
-      const ownedSnap=await fbDb.collection('campaigns')
-        .where('ownerId','==',user.id).get();
+      const ownedSnap=await _fb.getDocs(_fb.query(_fb.collection(fbDb,'campaigns'),_fb.where('ownerId','==',user.id)));
       const cloudCamps=ownedSnap.docs.map(d=>d.data());
 
       // 2. Also load campaigns where user is stored as a member
       // Store memberIds as a flat array for reliable querying
-      const memberSnap=await fbDb.collection('campaigns')
-        .where('memberIds','array-contains',user.id).get().catch(()=>({docs:[]}));
+      const memberSnap=await _fb.getDocs(_fb.query(_fb.collection(fbDb,'campaigns'),_fb.where('memberIds','array-contains',user.id))).catch(()=>({docs:[]}));
       memberSnap.docs.forEach(d=>{
         const c=d.data();
         if(!cloudCamps.find(x=>x.id===c.id))cloudCamps.push(c);
@@ -1195,7 +1189,7 @@ async function joinCampaignByCode(){
 
     if(Cloud.available()){
       try{
-        const snap=await fbDb.collection('campaigns').where('inviteCodeClean','==',code).limit(1).get();
+        const snap=await _fb.getDocs(_fb.query(_fb.collection(fbDb,'campaigns'),_fb.where('inviteCodeClean','==',code),_fb.limit(1)));
         showMsg('Step 4: Cloud query done. Docs found = '+snap.size,true);
         if(msgEl)msgEl.style.color='var(--text2)';
         await new Promise(r=>setTimeout(r,1500));
@@ -1325,9 +1319,7 @@ function doLeaveCampaign(){
   DB.saveCampaign(CC);
   // Also update cloud
   if(Cloud.available()){
-    fbDb.collection('campaigns').doc(CC.id).update({
-      members:CC.members
-    }).catch(e=>console.warn('Cloud leave error:',e));
+    _fb.updateDoc(_fb.doc(fbDb,'campaigns',CC.id),{members:CC.members}).catch(e=>console.warn('Cloud leave error:',e));
   }
   // Remove campaign from local storage for this user
   const allCamps=S.g('campaigns')||[];
@@ -2064,20 +2056,126 @@ function addCustomCombatant(){
 //  SOUNDBOARD
 // ══════════════════════════════════════════
 const SOUNDS=[
-  {id:'tavern',icon:'🍺',label:'Tavern',url:'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3'},
-  {id:'dungeon',icon:'🏰',label:'Dungeon',url:'https://assets.mixkit.co/active_storage/sfx/209/209-preview.mp3'},
-  {id:'battle',icon:'⚔️',label:'Battle',url:'https://assets.mixkit.co/active_storage/sfx/2957/2957-preview.mp3'},
-  {id:'forest',icon:'🌲',label:'Forest',url:'https://assets.mixkit.co/active_storage/sfx/2511/2511-preview.mp3'},
-  {id:'rain',icon:'🌧️',label:'Rain',url:'https://assets.mixkit.co/active_storage/sfx/2523/2523-preview.mp3'},
-  {id:'fire',icon:'🔥',label:'Fireplace',url:'https://assets.mixkit.co/active_storage/sfx/1247/1247-preview.mp3'},
-  {id:'ocean',icon:'🌊',label:'Ocean',url:'https://assets.mixkit.co/active_storage/sfx/2518/2518-preview.mp3'},
-  {id:'wind',icon:'💨',label:'Wind',url:'https://assets.mixkit.co/active_storage/sfx/2520/2520-preview.mp3'},
-  {id:'cave',icon:'🕳️',label:'Cave',url:'https://assets.mixkit.co/active_storage/sfx/209/209-preview.mp3'},
-  {id:'thunder',icon:'⛈️',label:'Storm',url:'https://assets.mixkit.co/active_storage/sfx/1253/1253-preview.mp3'},
-  {id:'market',icon:'🏪',label:'Market',url:'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3'},
-  {id:'silence',icon:'🔇',label:'Stop all',url:null},
+  {id:'tavern',icon:'🍺',label:'Tavern',freq:180,type:'crowd'},
+  {id:'dungeon',icon:'🏰',label:'Dungeon',freq:60,type:'drone'},
+  {id:'battle',icon:'⚔️',label:'Battle',freq:120,type:'rumble'},
+  {id:'forest',icon:'🌲',label:'Forest',freq:400,type:'nature'},
+  {id:'rain',icon:'🌧️',label:'Rain',freq:0,type:'noise'},
+  {id:'fire',icon:'🔥',label:'Fireplace',freq:0,type:'crackle'},
+  {id:'ocean',icon:'🌊',label:'Ocean',freq:0,type:'wave'},
+  {id:'wind',icon:'💨',label:'Wind',freq:0,type:'wind'},
+  {id:'cave',icon:'🕳️',label:'Cave',freq:80,type:'drone'},
+  {id:'thunder',icon:'⛈️',label:'Storm',freq:0,type:'noise'},
+  {id:'market',icon:'🏪',label:'Market',freq:250,type:'crowd'},
+  {id:'silence',icon:'🔇',label:'Stop all',freq:0,type:'stop'},
 ];
-let audioElements={};let currentSound=null;
+
+let audioCtx=null,currentNodes=[];
+
+function getAudioCtx(){
+  if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended')audioCtx.resume();
+  return audioCtx;
+}
+
+function stopAllAudio(){
+  currentNodes.forEach(n=>{try{n.stop?n.stop():n.disconnect();}catch(e){}});
+  currentNodes=[];
+  document.querySelectorAll('.sound-btn').forEach(b=>b.classList.remove('playing'));
+}
+
+function playSynthSound(sound){
+  stopAllAudio();
+  if(sound.type==='stop')return;
+  const ctx=getAudioCtx();
+  const gain=ctx.createGain();
+  gain.connect(ctx.destination);
+  gain.gain.setValueAtTime(0,ctx.currentTime);
+  gain.gain.linearRampToValueAtTime(0.3,ctx.currentTime+1.5);
+
+  if(sound.type==='noise'||sound.type==='crackle'||sound.type==='wave'||sound.type==='wind'){
+    // White/brown noise
+    const bufSize=ctx.sampleRate*3;
+    const buf=ctx.createBuffer(1,bufSize,ctx.sampleRate);
+    const data=buf.getChannelData(0);
+    let last=0;
+    for(let i=0;i<bufSize;i++){
+      const white=(Math.random()*2-1);
+      if(sound.type==='wave'||sound.type==='wind'){
+        last=last*0.99+white*0.01; // brownian
+        data[i]=last*10;
+      } else {
+        data[i]=white;
+      }
+    }
+    const src=ctx.createBufferSource();src.buffer=buf;src.loop=true;
+    // Shape the noise with filters
+    const filter=ctx.createBiquadFilter();
+    if(sound.type==='noise'){filter.type='bandpass';filter.frequency.value=400;filter.Q.value=0.5;}
+    else if(sound.type==='crackle'){filter.type='highpass';filter.frequency.value=1000;}
+    else if(sound.type==='wave'){filter.type='lowpass';filter.frequency.value=300;}
+    else if(sound.type==='wind'){filter.type='bandpass';filter.frequency.value=600;filter.Q.value=0.3;}
+    // LFO for waviness
+    const lfo=ctx.createOscillator();const lfoGain=ctx.createGain();
+    lfo.frequency.value=sound.type==='wave'?0.3:sound.type==='wind'?0.5:0.1;
+    lfoGain.gain.value=0.15;lfo.connect(lfoGain);lfoGain.connect(gain.gain);lfo.start();
+    src.connect(filter);filter.connect(gain);src.start();
+    currentNodes=[src,lfo];
+  } else {
+    // Drone/crowd: layered oscillators
+    const freqs=sound.type==='crowd'
+      ?[sound.freq,sound.freq*1.3,sound.freq*0.7,sound.freq*1.7]
+      :[sound.freq,sound.freq*1.01,sound.freq*0.99];
+    freqs.forEach((f,i)=>{
+      const osc=ctx.createOscillator();
+      const g2=ctx.createGain();g2.gain.value=0.08;
+      osc.type=sound.type==='rumble'?'sawtooth':'sine';
+      osc.frequency.value=f;
+      // Slight vibrato
+      const vib=ctx.createOscillator();const vibG=ctx.createGain();
+      vib.frequency.value=0.2+i*0.1;vibG.gain.value=f*0.005;
+      vib.connect(vibG);vibG.connect(osc.frequency);vib.start();
+      osc.connect(g2);g2.connect(gain);osc.start();
+      currentNodes.push(osc,vib);
+    });
+    // Add noise bed for crowd/rumble
+    if(sound.type==='crowd'||sound.type==='rumble'){
+      const buf=ctx.createBuffer(1,ctx.sampleRate*2,ctx.sampleRate);
+      const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+      const ns=ctx.createBufferSource();ns.buffer=buf;ns.loop=true;
+      const nf=ctx.createBiquadFilter();nf.type='bandpass';nf.frequency.value=sound.freq;nf.Q.value=1;
+      const ng=ctx.createGain();ng.gain.value=0.05;
+      ns.connect(nf);nf.connect(ng);ng.connect(gain);ns.start();
+      currentNodes.push(ns);
+    }
+  }
+  currentNodes.push(gain);
+}
+
+function playSound(id){
+  const sound=SOUNDS.find(s=>s.id===id);if(!sound)return;
+  if(sound.type==='stop'){stopAllAudio();if(CS)RT.pub('sound',{id:'silence'});toast('⏹ Stopped all sounds.');return;}
+
+  // If custom audio file is loaded for this id, use it
+  if(audioElements[id]){
+    stopAllAudio();
+    audioElements[id].currentTime=0;
+    audioElements[id].play().catch(()=>{
+      // Fall back to synth
+      playSynthSound(sound);
+    });
+    document.getElementById('sbtn-'+id)?.classList.add('playing');
+    if(CS)RT.pub('sound',{id});
+    toast('▶ '+sound.label);
+    return;
+  }
+
+  // Use synthesized sound
+  playSynthSound(sound);
+  document.getElementById('sbtn-'+id)?.classList.add('playing');
+  if(CS)RT.pub('sound',{id});
+  toast('▶ '+sound.label+' (synth — upload an MP3 for real audio)');
+}
 
 function renderSounds(){
   document.getElementById('main').innerHTML=`
@@ -2085,7 +2183,7 @@ function renderSounds(){
       <div class="ptop"><div class="ptitle">Soundboard</div></div>
       <div class="scroll">
         <div style="font-size:12px;color:var(--text2);margin-bottom:16px;line-height:1.6;">
-          Click a sound to play it for everyone in the session. The GM controls what all players hear.
+          Preset sounds are synthesized ambient tones — they work instantly with no downloads. For real recordings, upload your own MP3 files below. GM controls what all players hear in the session.
         </div>
         <div class="sound-grid" id="sound-grid">
           ${SOUNDS.map(s=>`
@@ -2106,49 +2204,26 @@ function renderSounds(){
     </div>`;
 }
 
-function playSound(id){
-  // Stop current sound
-  if(currentSound&&audioElements[currentSound]){
-    audioElements[currentSound].pause();
-    audioElements[currentSound].currentTime=0;
-    document.getElementById('sbtn-'+currentSound)?.classList.remove('playing');
-  }
-  if(id==='silence'){currentSound=null;if(CS)RT.pub('sound',{id:'silence'});return;}
-  const sound=SOUNDS.find(s=>s.id===id);if(!sound||!sound.url)return;
-  if(!audioElements[id]){
-    audioElements[id]=new Audio(sound.url);
-    audioElements[id].loop=true;
-  }
-  audioElements[id].play().catch(e=>{
-    console.warn('Audio play failed:',e);
-    const btn=document.getElementById('sbtn-'+id);
-    if(btn)btn.classList.remove('playing');
-    currentSound=null;
-    toast('⚠️ Could not play "'+sound.label+'" — browser blocked autoplay or the file is unavailable. Try uploading your own audio file below.',5000);
-  });
-  currentSound=id;
-  document.getElementById('sbtn-'+id)?.classList.add('playing');
-  if(CS)RT.pub('sound',{id});
-  toast('▶ Playing: '+sound.label+' for all players');
-}
+
 
 function loadCustomSound(input){
   const file=input.files[0];if(!file)return;
-  const name=document.getElementById('custom-sound-name').value.trim()||file.name;
+  const name=document.getElementById('custom-sound-name').value.trim()||file.name.replace(/\.[^.]+$/,'');
   const url=URL.createObjectURL(file);
-  audioElements['custom']=new Audio(url);
-  audioElements['custom'].loop=true;
-  // Add custom button
+  const audio=new Audio(url);audio.loop=true;
+  audioElements['custom_'+Date.now()]=audio;
+  const id='custom_'+name.replace(/\s+/g,'_').toLowerCase();
+  audioElements[id]=audio;
   const grid=document.getElementById('sound-grid');
   if(grid){
     const btn=document.createElement('div');
-    btn.className='sound-btn';btn.id='sbtn-custom';
+    btn.className='sound-btn';btn.id='sbtn-'+id;
     btn.innerHTML=`<div class="sound-icon">🎵</div>${name}`;
-    btn.onclick=()=>playSound('custom');
+    btn.onclick=()=>playSound(id);
     grid.appendChild(btn);
   }
   input.value='';
-  toast('Custom sound loaded: '+name);
+  toast('✓ "'+name+'" loaded — click to play');
 }
 
 function renderAddons(){
@@ -2170,17 +2245,17 @@ function renderAddons(){
 }
 
 function applyRemoteSound(id){
-  if(isGM())return;// GM doesn't react to their own broadcasts
-  if(id==='silence'){
-    Object.values(audioElements).forEach(a=>{a.pause();a.currentTime=0;});
-    currentSound=null;return;
-  }
+  if(canEdit())return;
+  if(id==='silence'){stopAllAudio();return;}
   const sound=SOUNDS.find(s=>s.id===id);
-  if(!sound||!sound.url)return;
-  if(!audioElements[id]){audioElements[id]=new Audio(sound.url);audioElements[id].loop=true;}
-  if(currentSound&&audioElements[currentSound]){audioElements[currentSound].pause();audioElements[currentSound].currentTime=0;}
-  audioElements[id].play().catch(()=>{});
-  currentSound=id;
+  if(!sound)return;
+  if(audioElements[id]){
+    stopAllAudio();
+    audioElements[id].currentTime=0;
+    audioElements[id].play().catch(()=>playSynthSound(sound));
+    return;
+  }
+  playSynthSound(sound);
 }
 
 // ══════════════════════════════════════════
@@ -3667,7 +3742,7 @@ const RT={
           }
           // Reload from Firestore
           if(Cloud.available()){
-            fbDb.collection(data.table).where('campaignId','==',data.campaignId).get().then(snap=>{
+            _fb.getDocs(_fb.query(_fb.collection(fbDb,data.table),_fb.where('campaignId','==',data.campaignId))).then(snap=>{
               if(snap.empty)return;
               const del=S.g('_deleted')||{};
               const deletedIds=(del[data.table]||[]);
@@ -3736,7 +3811,7 @@ function applyRemoteMapSwitch(idx,mapId){
     if(map&&map.imgData){Canvas.loadMapDirect(map.imgData);return;}
     // If not in local cache, try fetching from Firestore by mapId
     if(mapId&&fbDb){
-      fbDb.collection('maps').doc(mapId).get().then(doc=>{
+      _fb.getDoc(_fb.doc(fbDb,'maps',mapId)).then(doc=>{
         if(doc.exists){
           const m=doc.data();
           if(m.imgData){
@@ -4158,7 +4233,7 @@ const Canvas=(()=>{
         }
         // Try Firestore if not in local cache
         if(d.mapId&&typeof fbDb!=='undefined'&&fbDb){
-          fbDb.collection('maps').doc(d.mapId).get().then(doc=>{
+          _fb.getDoc(_fb.doc(fbDb,'maps',d.mapId)).then(doc=>{
             if(doc.exists){
               const m2=doc.data();
               if(m2.imgData){
@@ -4605,23 +4680,22 @@ async function doDeleteAccount(){
   // 3. Delete from Firestore — this is the critical one so they can't sign back in
   if(Cloud.available()){
     try{
-      await fbDb.collection('accounts').doc(userId).delete();
+      await _fb.deleteDoc(_fb.doc(fbDb,'accounts',userId));
       console.log('Account deleted from Firestore');
 
       // Also delete all owned campaigns from Firestore
-      const ownedSnap=await fbDb.collection('campaigns').where('ownerId','==',userId).get();
+      const ownedSnap=await _fb.getDocs(_fb.query(_fb.collection(fbDb,'campaigns'),_fb.where('ownerId','==',userId)));
       const deletions=[];
       ownedSnap.docs.forEach(doc=>{
-        deletions.push(fbDb.collection('campaigns').doc(doc.id).delete());
+        deletions.push(_fb.deleteDoc(_fb.doc(fbDb,'campaigns',doc.id)));
       });
 
       // Delete all campaign content owned by this user
       const tables=['characters','quests','notes','npcs','recaps','wiki','abilities','relations','maps'];
       for(const table of tables){
-        const snap=await fbDb.collection(table).where('campaignId','in',
-          ownedSnap.docs.length>0?ownedSnap.docs.map(d=>d.id):['__none__']
-        ).get().catch(()=>({docs:[]}));
-        snap.docs.forEach(doc=>deletions.push(fbDb.collection(table).doc(doc.id).delete()));
+        const ids=ownedSnap.docs.length>0?ownedSnap.docs.map(d=>d.id):null;
+const snap=ids?await _fb.getDocs(_fb.query(_fb.collection(fbDb,table),_fb.where('campaignId','in',ids))).catch(()=>({docs:[]})):{docs:[]};
+        snap.docs.forEach(doc=>deletions.push(_fb.deleteDoc(_fb.doc(fbDb,table,doc.id))));
       }
 
       await Promise.all(deletions);
