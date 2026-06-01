@@ -2064,17 +2064,17 @@ function addCustomCombatant(){
 //  SOUNDBOARD
 // ══════════════════════════════════════════
 const SOUNDS=[
-  {id:'tavern',icon:'🍺',label:'Tavern',url:'https://cdn.pixabay.com/audio/2022/03/15/audio_c8c8a73467.mp3'},
-  {id:'dungeon',icon:'🏰',label:'Dungeon',url:'https://cdn.pixabay.com/audio/2022/01/18/audio_d0a13f69d7.mp3'},
-  {id:'battle',icon:'⚔️',label:'Battle',url:'https://cdn.pixabay.com/audio/2022/10/30/audio_eb2db6c9c4.mp3'},
-  {id:'forest',icon:'🌲',label:'Forest',url:'https://cdn.pixabay.com/audio/2021/08/09/audio_dc39bede7b.mp3'},
-  {id:'rain',icon:'🌧️',label:'Rain',url:'https://cdn.pixabay.com/audio/2022/05/13/audio_257112ce22.mp3'},
-  {id:'fire',icon:'🔥',label:'Fireplace',url:'https://cdn.pixabay.com/audio/2022/03/10/audio_c8c8a73467.mp3'},
-  {id:'ocean',icon:'🌊',label:'Ocean',url:'https://cdn.pixabay.com/audio/2021/09/06/audio_6bc09d5f42.mp3'},
-  {id:'wind',icon:'💨',label:'Wind',url:'https://cdn.pixabay.com/audio/2022/01/27/audio_d0a13f69d7.mp3'},
-  {id:'market',icon:'🏪',label:'Market',url:'https://cdn.pixabay.com/audio/2022/03/15/audio_c8c8a73467.mp3'},
-  {id:'cave',icon:'🕳️',label:'Cave',url:'https://cdn.pixabay.com/audio/2022/01/18/audio_d0a13f69d7.mp3'},
-  {id:'thunder',icon:'⛈️',label:'Storm',url:'https://cdn.pixabay.com/audio/2021/08/09/audio_dc39bede7b.mp3'},
+  {id:'tavern',icon:'🍺',label:'Tavern',url:'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3'},
+  {id:'dungeon',icon:'🏰',label:'Dungeon',url:'https://assets.mixkit.co/active_storage/sfx/209/209-preview.mp3'},
+  {id:'battle',icon:'⚔️',label:'Battle',url:'https://assets.mixkit.co/active_storage/sfx/2957/2957-preview.mp3'},
+  {id:'forest',icon:'🌲',label:'Forest',url:'https://assets.mixkit.co/active_storage/sfx/2511/2511-preview.mp3'},
+  {id:'rain',icon:'🌧️',label:'Rain',url:'https://assets.mixkit.co/active_storage/sfx/2523/2523-preview.mp3'},
+  {id:'fire',icon:'🔥',label:'Fireplace',url:'https://assets.mixkit.co/active_storage/sfx/1247/1247-preview.mp3'},
+  {id:'ocean',icon:'🌊',label:'Ocean',url:'https://assets.mixkit.co/active_storage/sfx/2518/2518-preview.mp3'},
+  {id:'wind',icon:'💨',label:'Wind',url:'https://assets.mixkit.co/active_storage/sfx/2520/2520-preview.mp3'},
+  {id:'cave',icon:'🕳️',label:'Cave',url:'https://assets.mixkit.co/active_storage/sfx/209/209-preview.mp3'},
+  {id:'thunder',icon:'⛈️',label:'Storm',url:'https://assets.mixkit.co/active_storage/sfx/1253/1253-preview.mp3'},
+  {id:'market',icon:'🏪',label:'Market',url:'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3'},
   {id:'silence',icon:'🔇',label:'Stop all',url:null},
 ];
 let audioElements={};let currentSound=null;
@@ -2119,7 +2119,13 @@ function playSound(id){
     audioElements[id]=new Audio(sound.url);
     audioElements[id].loop=true;
   }
-  audioElements[id].play().catch(()=>toast('Could not play audio — browser may have blocked autoplay.'));
+  audioElements[id].play().catch(e=>{
+    console.warn('Audio play failed:',e);
+    const btn=document.getElementById('sbtn-'+id);
+    if(btn)btn.classList.remove('playing');
+    currentSound=null;
+    toast('⚠️ Could not play "'+sound.label+'" — browser blocked autoplay or the file is unavailable. Try uploading your own audio file below.',5000);
+  });
   currentSound=id;
   document.getElementById('sbtn-'+id)?.classList.add('playing');
   if(CS)RT.pub('sound',{id});
