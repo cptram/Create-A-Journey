@@ -6,9 +6,9 @@
 <title>Create a Journey v4.1 — by Creative Journeys</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
-<!-- Firebase -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<!-- Firebase via jsDelivr (works on Netlify) -->
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/app/dist/index.compat.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.12.0/firestore/dist/index.compat.min.js"></script>
 <style>
 :root{
   --bg:#0f0e17;--bg2:#1a1830;--surface:#1e1c32;--surface2:#252340;
@@ -536,16 +536,18 @@ const FB_CONFIG={
   messagingSenderId:"123551854366",
   appId:"1:123551854366:web:9e6d02aa496fb729cb630f"
 };
-let fbApp=null,fbDb=null;
+let fbApp=null,fbDb=null,_fbRetries=0;
 function initFirebase(){
-  // If Firebase SDK hasn't loaded yet, retry
   if(typeof firebase==='undefined'){
-    console.warn('Firebase SDK not loaded yet, retrying…');
+    _fbRetries++;
+    if(_fbRetries>50){
+      console.error('Firebase SDK failed to load after 10s — cloud features disabled. Check network/CSP settings.');
+      return;
+    }
     setTimeout(initFirebase,200);
     return;
   }
   try{
-    // Avoid re-initializing if already done
     if(fbDb)return;
     fbApp=firebase.apps.length?firebase.apps[0]:firebase.initializeApp(FB_CONFIG);
     fbDb=firebase.firestore();
