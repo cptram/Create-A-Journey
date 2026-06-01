@@ -3237,7 +3237,11 @@ function buildSessionScreen(sess,preserveCanvas){
         <!-- MAP TABS -->
         <div class="map-tabs" id="map-tabs">
           ${maps.length===0?`<span style="font-size:10px;color:var(--text3);">No maps — add them in Map Library first.</span>`:''}
-          ${maps.map((m,i)=>`<button class="map-tab${i===activeMapIdx?' on':''}" data-idx="${i}" onclick="switchMap(${i})">${m.name}</button>`).join('')}
+          ${maps.map((m,i)=>{
+            const full=m.name||'Map '+(i+1);
+            const short=full.length>18?full.substring(0,16).trimEnd()+'…':full;
+            return`<button class="map-tab${i===activeMapIdx?' on':''}" data-idx="${i}" onclick="switchMap(${i})" title="${full}">${short}</button>`;
+          }).join('')}
           ${canEdit&&maps.length>0?`<button class="tbtn" style="margin-left:4px;" onclick="go('maps')">+ Manage maps</button>`:''}
           ${canEdit&&maps.length>0?`<div style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text3);">GM active map: <span style="color:var(--gold);font-weight:700;" id="gm-active-map">${maps[activeMapIdx]?maps[activeMapIdx].name:'–'}</span></div>`:''}
         </div>
@@ -3339,7 +3343,7 @@ function buildSessionScreen(sess,preserveCanvas){
             ${canEdit&&maps.length>0?`<div class="sp">
               <div class="sl">Switch player map</div>
               <div style="font-size:10px;color:var(--text2);margin-bottom:6px;line-height:1.4;">Click a map to make it the active map all players see.</div>
-              ${maps.map((m,i)=>`<button class="tbtn${i===activeMapIdx?' on':''}" style="width:100%;margin-bottom:4px;text-align:left;" onclick="switchMap(${i})">${i===activeMapIdx?'▶ ':''} ${m.name}</button>`).join('')}
+              ${maps.map((m,i)=>{const full=m.name||'Map '+(i+1);const short=full.length>22?full.substring(0,20).trimEnd()+'…':full;return`<button class="tbtn map-sidebar-btn${i===activeMapIdx?' on':''}" style="width:100%;margin-bottom:4px;text-align:left;" onclick="switchMap(${i})" title="${full}">${i===activeMapIdx?'▶ ':''} ${short}</button>`;}).join('')}
             </div>`:''}
             <div class="sp">
               <div class="sl">Players online</div>
@@ -3412,12 +3416,21 @@ function switchMap(idx){
   const maps=DB.list('maps',CC.id);
   if(!maps[idx])return;
   activeMapIdx=idx;
+  // Update map-tab buttons (top toolbar)
   document.querySelectorAll('.map-tab').forEach((t,i)=>t.classList.toggle('on',i===idx));
+  // Update sidebar tbtn map buttons
+  document.querySelectorAll('.map-sidebar-btn').forEach((t,i)=>{
+    t.classList.toggle('on',i===idx);
+    const full=maps[i]?maps[i].name||'Map '+(i+1):'';
+    const short=full.length>22?full.substring(0,20).trimEnd()+'…':full;
+    t.textContent=(i===idx?'▶ ':'')+short;
+    t.title=full;
+  });
   const lbl=document.getElementById('gm-active-map');if(lbl)lbl.textContent=maps[idx].name;
   if(maps[idx].imgData)Canvas.loadMapDirect(maps[idx].imgData);
   else Canvas.loadMapDirect(null);
   RT.pub('map_switch',{idx,mapId:maps[idx].id});
-  toast('Map switched to: '+maps[idx].name);
+  toast('Map: '+maps[idx].name);
 }
 
 function endCurrentSession(){
