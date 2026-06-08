@@ -2182,8 +2182,11 @@ function renderSounds(){
     <div class="panel on">
       <div class="ptop"><div class="ptitle">Soundboard</div></div>
       <div class="scroll">
+        <div style="background:var(--amber-dim);border:1px solid rgba(224,163,74,.4);border-radius:var(--rsm);padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--amber);line-height:1.6;">
+          ⚠️ <strong>Heads up:</strong> Some or all of the preset sounds may not be working correctly right now — the soundboard is still being worked on. You can upload your own MP3 files below as a workaround.
+        </div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:16px;line-height:1.6;">
-          Preset sounds are synthesized ambient tones — they work instantly with no downloads. For real recordings, upload your own MP3 files below. GM controls what all players hear in the session.
+          GM controls what all players hear in the session. Upload your own MP3 files for reliable audio.
         </div>
         <div class="sound-grid" id="sound-grid">
           ${SOUNDS.map(s=>`
