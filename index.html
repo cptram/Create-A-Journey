@@ -562,6 +562,8 @@ function initFirebase(){
     // Test write
     _fb.setDoc(_fb.doc(_fb.collection(fbDb,'_ping'),'test'),{ts:Date.now()}).then(()=>{
       console.log('✅ Firestore connected');
+      // Flush any pending deletes from previous sessions
+      flushPendingDeletes();
     }).catch(e=>{
       console.error('❌ Firestore write failed:',e.code,e.message);
     });
@@ -954,6 +956,8 @@ const App={
   async syncFromCloud(user){
     if(!Cloud.available())return;
     try{
+      // First flush any pending local deletes to Firestore
+      await flushPendingDeletes();
       // 1. Load campaigns this user OWNS
       const ownedSnap=await _fb.getDocs(_fb.query(_fb.collection(fbDb,'campaigns'),_fb.where('ownerId','==',user.id)));
       const cloudCamps=ownedSnap.docs.map(d=>d.data());
@@ -4389,7 +4393,35 @@ function pickCol(el){document.querySelectorAll('.col-sw').forEach(s=>s.classList
 // Also fix brush size slider to use proper method
 // (the oninput in the HTML calls Canvas.brushSz= which uses the setter below)
 
-// ── TURN TIMER ──
+// Clean up any pending Firestore deletions from _deleted registry
+async function flushPendingDeletes(){
+  if(!Cloud.available())return;
+  const deleted=S.g('_deleted')||{};
+
+  // Delete campaigns
+  const campIds=deleted.campaigns||[];
+  for(const id of campIds){
+    try{
+      await _fb.deleteDoc(_fb.doc(fbDb,'campaigns',id));
+      const tables=['characters','quests','notes','npcs','sessions','maps','recaps','wiki','abilities','relations'];
+      for(const t of tables){
+        const snap=await _fb.getDocs(_fb.query(_fb.collection(fbDb,t),_fb.where('campaignId','==',id)));
+        await Promise.all(snap.docs.map(d=>_fb.deleteDoc(d.ref)));
+      }
+      console.log('✅ Flushed deleted campaign:',id);
+    }catch(e){console.warn('Flush campaign delete:',id,e);}
+  }
+
+  // Delete individual items (characters, quests, etc.)
+  const tables=['characters','quests','notes','npcs','sessions','maps','recaps','wiki','abilities','relations'];
+  for(const table of tables){
+    const ids=deleted[table]||[];
+    for(const id of ids){
+      try{await _fb.deleteDoc(_fb.doc(fbDb,table,id));}
+      catch(e){console.warn('Flush item delete:',table,id,e);}
+    }
+  }
+}
 let timerSeconds=60,timerRunning=false,timerInterval=null;
 function setTimer(s){timerSeconds=s;updateTimerDisplay(s,false);}
 function startTimer(){
