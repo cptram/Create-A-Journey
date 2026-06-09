@@ -716,7 +716,30 @@ const DB={
     return c;
   },
   getCampaign(id){return(S.g('campaigns')||[]).find(c=>c.id===id)||null;},
-  deleteCampaign(id){S.s('campaigns',(S.g('campaigns')||[]).filter(c=>c.id!==id));['characters','quests','notes','npcs','sessions','maps','recaps','wiki','abilities'].forEach(t=>{S.s(t,(S.g(t)||[]).filter(x=>x.campaignId!==id));});},
+  deleteCampaign(id){
+    // Remove locally
+    S.s('campaigns',(S.g('campaigns')||[]).filter(c=>c.id!==id));
+    const tables=['characters','quests','notes','npcs','sessions','maps','recaps','wiki','abilities','relations'];
+    tables.forEach(t=>{S.s(t,(S.g(t)||[]).filter(x=>x.campaignId!==id));});
+    // Track as deleted so syncFromCloud doesn't restore it
+    const deleted=S.g('_deleted')||{};
+    if(!deleted.campaigns)deleted.campaigns=[];
+    if(!deleted.campaigns.includes(id))deleted.campaigns.push(id);
+    S.s('_deleted',deleted);
+    // Delete from Firestore
+    const tryDel=()=>{
+      if(Cloud.available()){
+        _fb.deleteDoc(_fb.doc(fbDb,'campaigns',id)).catch(e=>console.warn('Del campaign:',e));
+        // Also delete all content for this campaign
+        tables.forEach(t=>{
+          _fb.getDocs(_fb.query(_fb.collection(fbDb,t),_fb.where('campaignId','==',id)))
+            .then(snap=>snap.docs.forEach(d=>_fb.deleteDoc(d.ref)))
+            .catch(()=>{});
+        });
+      } else setTimeout(tryDel,500);
+    };
+    tryDel();
+  },
   list(table,campaignId){return(S.g(table)||[]).filter(x=>x.campaignId===campaignId);},
   save(table,item){
     const all=S.g(table)||[];
@@ -943,12 +966,14 @@ const App={
         if(!cloudCamps.find(x=>x.id===c.id))cloudCamps.push(c);
       });
 
-      // 3. Merge all into localStorage
+      // 3. Merge all into localStorage — skip deleted ones
       const local=S.g('campaigns')||[];
+      const deleted=S.g('_deleted')||{};
+      const deletedCampIds=deleted.campaigns||[];
       cloudCamps.forEach(cc=>{
+        if(deletedCampIds.includes(cc.id))return; // skip deleted
         const i=local.findIndex(c=>c.id===cc.id);
         if(i>=0){
-          // Cloud wins unless local is explicitly newer
           if(!local[i].updatedAt||(cc.updatedAt&&cc.updatedAt>=local[i].updatedAt)){
             local[i]=cc;
           }
