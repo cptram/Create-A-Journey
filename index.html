@@ -3271,8 +3271,9 @@ function renderSession(){
           `:''}
           ${CU.role!=='gm'?`
             <p style="font-size:12px;color:var(--text2);margin-bottom:12px;line-height:1.6;">${isGM()?'Or join a session started by another GM:':'Enter the room code your GM shared to join a session.'}</p>
-            <div style="display:flex;gap:7px;">
-              <input class="inp" id="join-code-in" style="margin-bottom:0;flex:1;text-transform:uppercase;" placeholder="Room code e.g. CJ-AB12">
+            <div style="display:flex;gap:7px;align-items:center;">
+              <span style="font-family:'Cinzel',serif;font-size:14px;color:var(--gold);background:var(--gold-dim);border:1px solid rgba(201,168,76,.3);border-radius:var(--rsm);padding:8px 10px;white-space:nowrap;letter-spacing:2px;">CJ-</span>
+              <input class="inp" id="join-code-in" style="margin-bottom:0;flex:1;text-transform:uppercase;letter-spacing:2px;" placeholder="AB12" maxlength="8">
               <button class="btn pr" onclick="joinSession()">Join</button>
             </div>`:`
             <div style="font-size:12px;color:var(--text3);margin-top:8px;text-align:center;padding:10px;border-radius:var(--rsm);background:var(--bg2);border:1px solid var(--border);">
@@ -3293,10 +3294,11 @@ function startSession(){
 
 function joinSession(){
   const raw=(document.getElementById('join-code-in').value||'').trim().toUpperCase();
-  // Extract just the CJ-XXXX part in case user copied extra text
-  const match=raw.match(/CJ-[A-Z0-9]+/);
-  const code=match?match[0]:raw.replace(/[^A-Z0-9-]/g,'');
-  if(!code){toast('Enter a room code.');return;}
+  // Auto-prepend CJ- since the input only shows the suffix
+  const withPrefix=raw.startsWith('CJ-')?raw:'CJ-'+raw.replace(/[^A-Z0-9]/g,'');
+  const match=withPrefix.match(/CJ-[A-Z0-9]+/);
+  const code=match?match[0]:null;
+  if(!code||code==='CJ-'){toast('Enter a room code.');return;}
 
   // Try local DB first (same-device sessions)
   let sess=DB.sessionByCode(code);
@@ -3428,6 +3430,7 @@ function buildSessionScreen(sess,preserveCanvas){
               <button class="tbtn" onclick="Canvas.clearFog()" title="Remove all fog — reveal entire map to players">Clear fog</button>
               <button class="tbtn" onclick="Canvas.undo()" title="Undo last drawing stroke">↩ Undo</button>
               <button class="tbtn" onclick="toggleLabels()" title="Show/hide token name labels" id="btn-labels">Labels ✓</button>
+              <button class="tbtn" id="btn-fog-preview" onclick="toggleFogPreview()" title="Preview what players see through the fog">👁 Fog preview</button>
               <button class="tbtn dr" onclick="Canvas.resetAll()" title="Reset everything — remove all tokens, drawings, and fog">Reset all</button>
               <input type="file" id="map-file-import" accept="image/*" style="display:none;" onchange="Canvas.loadMap(this.files[0]);this.value='';">
             </div>
@@ -3500,7 +3503,11 @@ function buildSessionScreen(sess,preserveCanvas){
     Canvas.setupDragDrop();
     // GM sees tokens through fog (fog semi-transparent), players see fog fully opaque
     const fgCanvas=document.getElementById('fgC');
-    if(fgCanvas)fgCanvas.style.opacity=canEdit()?'0.7':'1';
+    if(fgCanvas){
+      // GM: fog hidden so they always see full map (fog still drawn and synced to players)
+      // Players: fog fully visible
+      fgCanvas.style.opacity=canEdit()?'0':'1';
+    }
 
     if(isGM()){
       // GM: connect/reuse RT, then restore local state
@@ -4220,11 +4227,15 @@ const Canvas=(()=>{
   function clearFog(broadcast=true){
     if(fgX){
       fgX.save();
-      fgX.setTransform(1,0,0,1,0,0); // reset dpr transform so full physical canvas is cleared
+      fgX.setTransform(1,0,0,1,0,0);
       fgX.clearRect(0,0,fgC.width,fgC.height);
       fgX.restore();
     }
-    if(broadcast)RT.pub('clear_fog',{});
+    if(broadcast){
+      RT.pub('clear_fog',{});
+      // Also send full state so players get updated fog snapshot
+      setTimeout(()=>RT.sendFullState&&RT.sendFullState(),100);
+    }
   }
   function resetAll(broadcast=true){tokens=[];selectedTok=null;mapImg=null;updSel();clearDraw(false);initFog();redrawBg();drawToks();if(broadcast)RT.pub('reset_all',{});}
   function removeSel(){if(!selectedTok)return;RT.pub('tok_del',{id:selectedTok.id});tokens=tokens.filter(t=>t!==selectedTok);selectedTok=null;updSel();drawToks();}
@@ -4485,6 +4496,13 @@ function updateTimerDisplay(s,running){
 }
 
 // ── LABEL TOGGLE ──
+function toggleFogPreview(){
+  const fg=document.getElementById('fgC');if(!fg)return;
+  const previewing=fg.style.opacity==='1';
+  fg.style.opacity=previewing?'0':'1';
+  const btn=document.getElementById('btn-fog-preview');
+  if(btn){btn.textContent=previewing?'👁 Fog preview':'👁 GM view';btn.classList.toggle('on',!previewing);}
+}
 function toggleLabels(){
   const showing=Canvas.toggleLabels();
   const btn=document.getElementById('btn-labels');
