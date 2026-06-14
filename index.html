@@ -3985,7 +3985,14 @@ const Canvas=(()=>{
     [bgX,drX,tkX,fgX].forEach(ctx=>{if(ctx)ctx.setTransform(dpr,0,0,dpr,0,0);});
     initFog();redrawBg();drawToks();
   }
-  function initFog(){if(!fgX)return;fgX.fillStyle='rgba(0,0,0,0.85)';fgX.fillRect(0,0,fgC.width,fgC.height);}
+  function initFog(){
+    if(!fgX)return;
+    fgX.save();
+    fgX.setTransform(1,0,0,1,0,0);
+    fgX.fillStyle='rgba(0,0,0,0.85)';
+    fgX.fillRect(0,0,fgC.width,fgC.height);
+    fgX.restore();
+  }
   function redrawBg(){
     if(!bgX)return;const w=bgC.width,h=bgC.height;
     bgX.fillStyle='#111020';bgX.fillRect(0,0,w,h);
@@ -4210,7 +4217,15 @@ const Canvas=(()=>{
   }
   function toggleGrid(){showGrid=!showGrid;redrawBg();}
   function clearDraw(broadcast=true){if(drX)drX.clearRect(0,0,drC.width,drC.height);if(broadcast)RT.pub('clear_draw',{});}
-  function clearFog(broadcast=true){if(fgX)fgX.clearRect(0,0,fgC.width,fgC.height);if(broadcast)RT.pub('clear_fog',{});}
+  function clearFog(broadcast=true){
+    if(fgX){
+      fgX.save();
+      fgX.setTransform(1,0,0,1,0,0); // reset dpr transform so full physical canvas is cleared
+      fgX.clearRect(0,0,fgC.width,fgC.height);
+      fgX.restore();
+    }
+    if(broadcast)RT.pub('clear_fog',{});
+  }
   function resetAll(broadcast=true){tokens=[];selectedTok=null;mapImg=null;updSel();clearDraw(false);initFog();redrawBg();drawToks();if(broadcast)RT.pub('reset_all',{});}
   function removeSel(){if(!selectedTok)return;RT.pub('tok_del',{id:selectedTok.id});tokens=tokens.filter(t=>t!==selectedTok);selectedTok=null;updSel();drawToks();}
   function loadMap(file){if(!file)return;const rd=new FileReader();rd.onload=ev=>{const img=new Image();img.onload=()=>{mapImg=img;redrawBg();};img.src=ev.target.result;};rd.readAsDataURL(file);}
