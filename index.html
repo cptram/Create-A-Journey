@@ -3504,9 +3504,12 @@ function buildSessionScreen(sess,preserveCanvas){
     // GM sees tokens through fog (fog semi-transparent), players see fog fully opaque
     const fgCanvas=document.getElementById('fgC');
     if(fgCanvas){
-      // GM: fog hidden so they always see full map (fog still drawn and synced to players)
-      // Players: fog fully visible
       fgCanvas.style.opacity=canEdit()?'0':'1';
+    }
+    // If events were missed while on another tab, request fresh state
+    if(RT._dirty&&!isGM()){
+      setTimeout(()=>RT.pub('request_state',{who:CU?CU.name:'Player'}),300);
+      RT._dirty=false;
     }
 
     if(isGM()){
@@ -3658,8 +3661,8 @@ const RT={
       this.channel.subscribe(msg=>{
         try{
           const data=typeof msg.data==='string'?JSON.parse(msg.data):msg.data;
-          // Filter own messages
-          if(data&&data._sender===this.myClientId)return;
+          // Filter own messages — only if we have a valid clientId
+          if(this.myClientId&&data&&data._sender===this.myClientId)return;
           this._handle(msg.name,data);
         }catch(e){console.error('recv err',e);}
       });
@@ -3701,7 +3704,10 @@ const RT={
 
   _handle(name,data){
     const canvasEvents=['tok_move','tok_add','tok_del','draw','erase','fog','unfog','clear_draw','clear_fog','reset_all','map_switch','full_state'];
-    if(canvasEvents.includes(name)&&!document.getElementById('cw')){this._dirty=true;}
+    if(canvasEvents.includes(name)&&!document.getElementById('cw')){
+      this._dirty=true;
+      return; // don't process canvas events when canvas isn't visible
+    }
     switch(name){
       case'tok_move':   Canvas.applyRemoteTokenMove(data);break;
       case'tok_add':    Canvas.applyRemoteTokenAdd(data);break;
