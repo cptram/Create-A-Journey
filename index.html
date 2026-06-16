@@ -3558,7 +3558,6 @@ function switchMap(idx){
 }
 
 function endCurrentSession(){
-  // Broadcast session end to all players before cleaning up
   RT.pub('session_end',{});
   SessionState.save();
   if(CS){
@@ -3569,7 +3568,7 @@ function endCurrentSession(){
   }
   S.d('my_sess_'+(CU&&CU.id));
   stopSessionAutoSave();
-  // Small delay so broadcast sends before cleanup closes connection
+  // Wait longer so Ably actually delivers the session_end before we close
   setTimeout(()=>{
     RT.cleanup();
     document.getElementById('live-dot').style.display='none';
@@ -3577,11 +3576,55 @@ function endCurrentSession(){
     Canvas.cleanup();
     renderSession();
     toast('Session ended.');
-  },400);
+  },1500);
 }
+
 function endSessionById(id){const all=S.g('sessions')||[];const i=all.findIndex(s=>s.id===id);if(i>=0){all[i].active=false;S.s('sessions',all);}if(CS&&CS.id===id){SessionState.clear();CS=null;}S.d('my_sess_'+(CU&&CU.id));stopSessionAutoSave();RT.cleanup();renderSession();toast('Session ended.');}
-function leaveSession(){SessionState.save();S.d('my_sess_'+(CU&&CU.id));CS=null;stopSessionAutoSave();RT.cleanup();document.getElementById('live-dot').style.display='none';document.getElementById('sb-sess').textContent='–';Canvas.cleanup();renderSession();}
-function copyRoomLink(code){navigator.clipboard.writeText('Room code: '+code).then(()=>toast('Room code copied: '+code)).catch(()=>toast('Room code: '+code));}
+
+function leaveSession(){
+  // Show confirmation popup
+  const ov=document.createElement('div');ov.className='ov';ov.id='leave-sess-ov';
+  ov.innerHTML=`<div class="confirm-box">
+    <div class="confirm-title">Leave session?</div>
+    <div class="confirm-body">You will leave this session. The session will continue for others.</div>
+    <div class="confirm-acts">
+      <button class="btn" onclick="document.getElementById('leave-sess-ov').remove()">Stay</button>
+      <button class="btn dr" style="font-weight:700;" onclick="doLeaveSession()">Leave</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+}
+
+function doLeaveSession(){
+  const ov=document.getElementById('leave-sess-ov');if(ov)ov.remove();
+  SessionState.save();
+  S.d('my_sess_'+(CU&&CU.id));
+  CS=null;stopSessionAutoSave();RT.cleanup();
+  document.getElementById('live-dot').style.display='none';
+  document.getElementById('sb-sess').textContent='–';
+  Canvas.cleanup();
+  // Show left message
+  document.getElementById('main').innerHTML=`
+    <div class="panel on">
+      <div class="sess-start">
+        <div class="sess-card" style="text-align:center;">
+          <div style="font-size:32px;margin-bottom:16px;">👋</div>
+          <div class="sess-logo">You left the session</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:10px;line-height:1.6;">The session is still running for others.<br>You can rejoin with the room code.</div>
+          <button class="btn-gold" style="margin-top:20px;" onclick="renderSession()">Back to session lobby</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function copyRoomLink(code){
+  const text=code;
+  navigator.clipboard.writeText(text).then(()=>toast('Room code copied: '+code)).catch(()=>{
+    // Fallback for browsers that block clipboard
+    const el=document.createElement('textarea');el.value=text;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);
+    toast('Room code copied: '+code);
+  });
+}
 
 // Feed
 function addFeed(who,txt,type='msg'){
@@ -3658,8 +3701,8 @@ const RT={
       this.channel.subscribe(msg=>{
         try{
           const data=typeof msg.data==='string'?JSON.parse(msg.data):msg.data;
-          // Filter own messages — only if we have a valid clientId
-          if(this.myClientId&&data&&data._sender===this.myClientId)return;
+          // Filter own messages — except session_end which must always be processed
+          if(msg.name!=='session_end'&&this.myClientId&&data&&data._sender===this.myClientId)return;
           this._handle(msg.name,data);
         }catch(e){console.error('recv err',e);}
       });
