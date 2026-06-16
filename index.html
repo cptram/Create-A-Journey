@@ -668,17 +668,14 @@ const Cloud={
       await Promise.all(tables.map(async table=>{
         const q=_fb.query(_fb.collection(fbDb,table),_fb.where('campaignId','==',campaignId));
         const snap=await _fb.getDocs(q);
-        if(snap.empty)return;
         const deletedIds=deleted[table]||[];
-        const local=S.g(table)||[];
-        snap.docs.forEach(d=>{
-          const item=d.data();
-          if(deletedIds.includes(item.id))return;
-          const i=local.findIndex(x=>x.id===item.id);
-          if(i>=0){if(!local[i].updatedAt||(item.updatedAt&&item.updatedAt>=local[i].updatedAt))local[i]=item;}
-          else local.push(item);
-        });
-        S.s(table,local);
+        // Get all items from cloud for this campaign
+        const cloudItems=snap.docs.map(d=>d.data()).filter(item=>!deletedIds.includes(item.id));
+        // Get local items for OTHER campaigns (don't touch them)
+        const otherLocal=(S.g(table)||[]).filter(x=>x.campaignId!==campaignId);
+        // Merge: other campaigns' local data + cloud data for this campaign
+        const merged=[...otherLocal,...cloudItems];
+        S.s(table,merged);
       }));
     }catch(e){console.warn('Cloud loadCampaignData:',e);}
   },
@@ -3427,7 +3424,7 @@ function buildSessionScreen(sess,preserveCanvas){
               <button class="tbtn" onclick="document.getElementById('map-file-import').click()" title="Import a map image onto the canvas">🗺 Map</button>
               <div class="cbsep"></div>
               <button class="tbtn" onclick="Canvas.clearDraw()" title="Clear all drawings from the canvas">Clear draw</button>
-              <button class="tbtn" onclick="Canvas.clearFog()" title="Remove all fog — reveal entire map to players">Clear fog</button>
+              <button class="tbtn" onclick="Canvas.clearFog();setTimeout(()=>RT.sendFullState(),200);" title="Remove all fog — reveal entire map to players">Clear fog</button>
               <button class="tbtn" onclick="Canvas.undo()" title="Undo last drawing stroke">↩ Undo</button>
               <button class="tbtn" onclick="toggleLabels()" title="Show/hide token name labels" id="btn-labels">Labels ✓</button>
               <button class="tbtn" id="btn-fog-preview" onclick="toggleFogPreview()" title="Preview what players see through the fog">👁 Fog preview</button>
@@ -3778,24 +3775,21 @@ const RT={
         handleReadyResponse(data);
         break;
       case'data_refresh':
-        // GM changed campaign data — members reload from Firestore and refresh view
-        if(!canEdit()&&data.table&&data.campaignId===CC?.id){
+        if(data.table&&data.campaignId===CC?.id){
+          // Apply deletion immediately — trust the GM's broadcast
           if(data.deletedId){
-            // Apply deletion locally immediately
-            const existing=S.g(data.table)||[];
-            S.s(data.table,existing.filter(x=>x.id!==data.deletedId));
+            S.s(data.table,(S.g(data.table)||[]).filter(x=>x.id!==data.deletedId));
             const deleted=S.g('_deleted')||{};
             if(!deleted[data.table])deleted[data.table]=[];
             if(!deleted[data.table].includes(data.deletedId))deleted[data.table].push(data.deletedId);
             S.s('_deleted',deleted);
           }
-          // Reload from Firestore
-          if(Cloud.available()){
+          // For non-deletions, reload from Firestore to get latest data
+          if(!data.deletedId&&Cloud.available()){
             _fb.getDocs(_fb.query(_fb.collection(fbDb,data.table),_fb.where('campaignId','==',data.campaignId))).then(snap=>{
-              if(snap.empty)return;
               const del=S.g('_deleted')||{};
               const deletedIds=(del[data.table]||[]);
-              const local=S.g(data.table)||[];
+              const local=(S.g(data.table)||[]).filter(x=>!deletedIds.includes(x.id));
               snap.docs.forEach(d=>{
                 const item=d.data();
                 if(deletedIds.includes(item.id))return;
@@ -3803,14 +3797,14 @@ const RT={
                 if(i>=0)local[i]=item;else local.push(item);
               });
               S.s(data.table,local);
-              // Refresh current panel if relevant
-              const active=document.querySelector('.snav.on');
-              if(active&&active.id){
-                const key=active.id.replace('n-','');
-                const tableToPanel={characters:'characters',quests:'quests',notes:'notes',npcs:'npcs',recaps:'recaps',wiki:'wiki',relations:'relations',abilities:'characters'};
-                if(tableToPanel[data.table]===key)go(key);
-              }
             }).catch(()=>{});
+          }
+          // Refresh current panel
+          const active=document.querySelector('.snav.on');
+          if(active&&active.id){
+            const key=active.id.replace('n-','');
+            const tableToPanel={characters:'characters',quests:'quests',notes:'notes',npcs:'npcs',recaps:'recaps',wiki:'wiki',relations:'relations',abilities:'characters'};
+            if(tableToPanel[data.table]===key)setTimeout(()=>go(key),300);
           }
         }
         break;
@@ -4237,11 +4231,7 @@ const Canvas=(()=>{
       fgX.clearRect(0,0,fgC.width,fgC.height);
       fgX.restore();
     }
-    if(broadcast){
-      RT.pub('clear_fog',{});
-      // Also send full state so players get updated fog snapshot
-      setTimeout(()=>RT.sendFullState&&RT.sendFullState(),100);
-    }
+    if(broadcast)RT.pub('clear_fog',{});
   }
   function resetAll(broadcast=true){tokens=[];selectedTok=null;mapImg=null;updSel();clearDraw(false);initFog();redrawBg();drawToks();if(broadcast)RT.pub('reset_all',{});}
   function removeSel(){if(!selectedTok)return;RT.pub('tok_del',{id:selectedTok.id});tokens=tokens.filter(t=>t!==selectedTok);selectedTok=null;updSel();drawToks();}
