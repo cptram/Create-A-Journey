@@ -1028,6 +1028,11 @@ const App={
     document.getElementById('sb-camp').textContent=c.name;
     // If player doesn't own this campaign, load its data from Firestore
     if(c.ownerId!==CU.id&&Cloud.available()){
+      // Clear stale local data for this campaign first, then reload from cloud
+      const tables=['characters','quests','notes','npcs','recaps','wiki','abilities','relations'];
+      tables.forEach(t=>{
+        S.s(t,(S.g(t)||[]).filter(x=>x.campaignId!==c.id));
+      });
       Cloud.loadCampaignData(c.id).then(()=>{
         // Refresh current panel after data loads
         const active=document.querySelector('.snav.on');
@@ -3558,25 +3563,26 @@ function switchMap(idx){
 }
 
 function endCurrentSession(){
-  RT.pub('session_end',{});
-  SessionState.save();
   if(CS){
+    // Mark session inactive immediately
     const all=S.g('sessions')||[];
     const i=all.findIndex(s=>s.id===CS.id);
     if(i>=0){all[i].active=false;S.s('sessions',all);}
-    SessionState.clear();CS=null;
   }
-  S.d('my_sess_'+(CU&&CU.id));
-  stopSessionAutoSave();
-  // Wait longer so Ably actually delivers the session_end before we close
+  // Publish end event — give Ably 2 seconds to deliver before closing connection
+  RT.pub('session_end',{code:CS?CS.code:''});
   setTimeout(()=>{
+    SessionState.save();
+    SessionState.clear();CS=null;
+    S.d('my_sess_'+(CU&&CU.id));
+    stopSessionAutoSave();
     RT.cleanup();
     document.getElementById('live-dot').style.display='none';
     document.getElementById('sb-sess').textContent='–';
     Canvas.cleanup();
     renderSession();
     toast('Session ended.');
-  },1500);
+  },2000);
 }
 
 function endSessionById(id){const all=S.g('sessions')||[];const i=all.findIndex(s=>s.id===id);if(i>=0){all[i].active=false;S.s('sessions',all);}if(CS&&CS.id===id){SessionState.clear();CS=null;}S.d('my_sess_'+(CU&&CU.id));stopSessionAutoSave();RT.cleanup();renderSession();toast('Session ended.');}
@@ -3618,12 +3624,10 @@ function doLeaveSession(){
 }
 
 function copyRoomLink(code){
-  const text=code;
-  navigator.clipboard.writeText(text).then(()=>toast('Room code copied: '+code)).catch(()=>{
-    // Fallback for browsers that block clipboard
-    const el=document.createElement('textarea');el.value=text;document.body.appendChild(el);el.select();document.execCommand('copy');document.body.removeChild(el);
-    toast('Room code copied: '+code);
-  });
+  // Strip CJ- prefix since the join input already has CJ- shown
+  const suffix=code.startsWith('CJ-')?code.slice(3):code;
+  const copy=(t)=>{navigator.clipboard.writeText(t).then(()=>toast('Copied: '+t)).catch(()=>{const el=document.createElement('textarea');el.value=t;document.body.appendChild(el);el.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(el);toast('Copied: '+t);});};
+  copy(suffix);
 }
 
 // Feed
@@ -3702,7 +3706,7 @@ const RT={
         try{
           const data=typeof msg.data==='string'?JSON.parse(msg.data):msg.data;
           // Filter own messages — except session_end which must always be processed
-          if(msg.name!=='session_end'&&this.myClientId&&data&&data._sender===this.myClientId)return;
+          if(this.myClientId&&data&&data._sender===this.myClientId)return; // session_end now handled by GM separately
           this._handle(msg.name,data);
         }catch(e){console.error('recv err',e);}
       });
