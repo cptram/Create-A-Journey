@@ -3700,6 +3700,7 @@ const RT={
 
     this.ably.connection.on('connected',()=>{
       addFeed('System','Connected · '+code,'system');
+      this._flushQueue();
       // Unsubscribe first so we don't stack duplicate listeners on reconnect
       this.channel.unsubscribe();
       this.channel.subscribe(msg=>{
@@ -3717,6 +3718,8 @@ const RT={
         this.pub('heartbeat',{name:CU?CU.name:'Player',role:CU?CU.role:'player',id:this.myClientId});
         // Always request fresh state on (re)connect — gets latest canvas state
         if(!isGM())setTimeout(()=>this.pub('request_state',{who:CU?CU.name:'Player'}),500);
+        // GM sends full state after connecting so players get current canvas
+        if(isGM()&&CS)setTimeout(()=>this.sendFullState(),800);
       },500);
     });
 
@@ -3733,20 +3736,42 @@ const RT={
   cleanup(){
     if(this._heartbeatInterval){clearInterval(this._heartbeatInterval);this._heartbeatInterval=null;}
     if(this._pruneInterval){clearInterval(this._pruneInterval);this._pruneInterval=null;}
+    this._pubQueue=[];
     if(this.channel)this.channel.unsubscribe();
     if(this.ably)this.ably.close();
     this.channel=null;this.ably=null;this.sessionCode=null;this.myClientId=null;this._onlineUsers={};
   },
 
+  _pubQueue:[],
+
   pub(name,data){
     if(!this.channel)return;
     const payload={...(data||{}),_sender:this.myClientId};
-    this.channel.publish(name,payload,(err)=>{
-      if(err)addFeed('System','❌ Ably: '+err.message,'system');
-    });
+    if(this.ably&&this.ably.connection.state==='connected'){
+      this.channel.publish(name,payload,(err)=>{
+        if(err)console.warn('Ably pub err:',err.message);
+      });
+    } else {
+      // Queue message until connected
+      this._pubQueue.push({name,payload});
+    }
+  },
+
+  _flushQueue(){
+    while(this._pubQueue.length){
+      const {name,payload}=this._pubQueue.shift();
+      this.channel.publish(name,payload,(err)=>{
+        if(err)console.warn('Ably flush err:',err.message);
+      });
+    }
   },
 
   _handle(name,data){
+    // session_end must always be processed — handle before any other checks
+    if(name==='session_end'){
+      if(!canEdit())onRemoteSessionEnd();
+      return;
+    }
     const canvasEvents=['tok_move','tok_add','tok_del','draw','erase','fog','unfog','clear_draw','clear_fog','reset_all','map_switch','full_state'];
     if(canvasEvents.includes(name)&&!document.getElementById('cw')){
       this._dirty=true;
@@ -3766,7 +3791,6 @@ const RT={
       case'map_switch': applyRemoteMapSwitch(data.idx,data.mapId);break;
       case'feed':       addFeed(data.who,data.txt,data.type||'msg');break;
       case'initiative': applyRemoteInitiative(data.idx);break;
-      case'session_end':onRemoteSessionEnd();break;
       case'full_state': Canvas.applyFullState(data);this._dirty=false;break;
       case'request_state':
         if(isGM()&&CS){this.sendFullState();}
